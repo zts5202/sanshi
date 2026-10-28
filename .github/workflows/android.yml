@@ -1,0 +1,119 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sanshi-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  debug-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Assemble debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Hash APK
+        id: apk
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk/debug -name '*.apk' -print -quit)"
+          test -n "$APK"
+          cp "$APK" sanshi-0.1.0-debug.apk
+          SHA="$(sha256sum sanshi-0.1.0-debug.apk | awk '{print $1}')"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "APK_SHA256=$SHA"
+          {
+            echo "## 三事 0.1.0 debug"
+            echo ""
+            echo "SHA-256: \`$SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanshi-0.1.0-debug
+          path: sanshi-0.1.0-debug.apk
+          if-no-files-found: error
+
+      - name: Write release notes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          cat > release-notes.md << EOF
+          三事 debug 预发布包，方便直接安装验收。
+
+          - versionName: \`0.1.0\`
+          - versionCode: \`1\`
+          - 包名: \`com.zts.sanshi\`
+          - minSdk: 26（Android 8.0+）
+          - 这是 **universal debug APK**（无原生库拆分，可装在 arm64-v8a 真机上）
+          - 签名是调试证书。若手机上已有其他签名的同包名应用，需要先卸载再装。
+
+          ## SHA-256
+
+          \`\`\`
+          ${{ steps.apk.outputs.sha }}
+          \`\`\`
+
+          校验：
+
+          \`\`\`
+          sha256sum sanshi-0.1.0-debug.apk
+          \`\`\`
+
+          ## 安装
+
+          1. 下载 \`sanshi-0.1.0-debug.apk\`。
+          2. 在系统设置里允许安装未知来源应用。
+          3. 打开 APK 完成安装。打开后只记今天最多 3 件事，数据留在本机；过了当天再打开，昨天的列表会被清空，不能回看。
+          EOF
+
+      - name: Publish prerelease
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0
+          target_commitish: ${{ github.sha }}
+          name: 三事 v0.1.0（debug prerelease）
+          prerelease: true
+          make_latest: false
+          generate_release_notes: false
+          body_path: release-notes.md
+          files: sanshi-0.1.0-debug.apk
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
