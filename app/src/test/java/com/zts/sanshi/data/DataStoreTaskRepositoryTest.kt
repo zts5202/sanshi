@@ -38,16 +38,22 @@ class DataStoreTaskRepositoryTest {
     }
 
     @Test
-    fun dateChangeClearsYesterday() = runTest {
+    fun dateChangeArchivesAndQueuesIncomplete() = runTest {
         val (repo, clock) = open()
         repo.add("昨天的事")
         repo.add("另一件")
+        val id = repo.observe().first().tasks.first().id
+        repo.setDone(id, true)
         clock.date = clock.date.plusDays(1)
-        assertTrue(repo.observe().first().tasks.isEmpty())
         repo.refreshForToday()
-        val today = repo.observe().first()
-        assertEquals(clock.date, today.date)
-        assertTrue(today.tasks.isEmpty())
+        val snap = repo.observe().first()
+        assertEquals(clock.date, snap.date)
+        assertTrue(snap.tasks.isEmpty())
+        assertEquals(1, snap.pendingIncomplete.size)
+        assertEquals("另一件", snap.pendingIncomplete.single().text)
+        assertTrue(snap.history.any { it.items.any { i -> i.text == "昨天的事" && i.done } })
+        repo.disposeAllDelete()
+        assertTrue(repo.observe().first().pendingIncomplete.isEmpty())
         assertEquals(AddOutcome.Added, repo.add("今天的第一件"))
         assertEquals(listOf("今天的第一件"), repo.observe().first().tasks.map { it.text })
     }
@@ -64,6 +70,20 @@ class DataStoreTaskRepositoryTest {
         repo.delete(first.id)
         assertEquals(AddOutcome.Added, repo.add("四"))
         assertEquals(listOf("二", "三", "四"), repo.observe().first().tasks.map { it.text })
+    }
+
+    @Test
+    fun poolPromoteRespectsCap() = runTest {
+        val (repo, _) = open()
+        assertTrue(repo.addPool("灵感"))
+        repo.add("一")
+        repo.add("二")
+        repo.add("三")
+        val poolId = repo.observe().first().pool.single().id
+        assertEquals(AddOutcome.RejectedFull, repo.promotePoolToToday(poolId))
+        repo.delete(repo.observe().first().tasks.first().id)
+        assertEquals(AddOutcome.Added, repo.promotePoolToToday(poolId))
+        assertTrue(repo.observe().first().pool.isEmpty())
     }
 
     private lateinit var repoStore: androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences>
@@ -84,8 +104,8 @@ class DataStoreTaskRepositoryTest {
         override fun today(): LocalDate = date
     }
 
-    private class SequentialIds(start: Int = 0) : TaskIds {
-        private var next = start
-        override fun newId(): String = "id-${++next}"
+    private class SequentialIds(start: Int = 1) : TaskIds {
+        private var n = start
+        override fun newId(): String = (n++).toString()
     }
 }

@@ -7,8 +7,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -16,7 +19,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -51,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import com.zts.sanshi.domain.Task
 import com.zts.sanshi.ui.theme.Blue
 import com.zts.sanshi.ui.theme.Border
+import com.zts.sanshi.ui.theme.Danger
 import com.zts.sanshi.ui.theme.Ink
 import com.zts.sanshi.ui.theme.InkMuted
 import com.zts.sanshi.ui.theme.Motion
@@ -59,6 +65,7 @@ import kotlinx.coroutines.delay
 
 private val CardShape = RoundedCornerShape(16.dp)
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TaskCard(
     task: Task,
@@ -67,11 +74,14 @@ fun TaskCard(
     reduceMotion: Boolean,
     onToggle: (Boolean) -> Unit,
     onTextClick: () -> Unit,
+    onRollTomorrow: () -> Unit,
+    onMoveToPool: () -> Unit,
     onDeleteClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val textInteraction = remember { MutableInteractionSource() }
-    val deleteInteraction = remember { MutableInteractionSource() }
+    val menuInteraction = remember { MutableInteractionSource() }
+    var menuOpen by remember { mutableStateOf(false) }
     val pop = remember { Animatable(1f) }
     LaunchedEffect(celebrationGeneration) {
         if (celebrationGeneration == 0 || reduceMotion) {
@@ -90,7 +100,13 @@ fun TaskCard(
                 scaleY = pop.value
             }
             .pressScale(textInteraction)
-            .shadow(elevation = 2.dp, shape = CardShape, ambientColor = Shadow, spotColor = Shadow),
+            .shadow(elevation = 2.dp, shape = CardShape, ambientColor = Shadow, spotColor = Shadow)
+            .combinedClickable(
+                interactionSource = textInteraction,
+                indication = null,
+                onClick = {},
+                onLongClick = { menuOpen = true },
+            ),
         shape = CardShape,
         color = Color.White,
         border = BorderStroke(1.dp, Border),
@@ -106,10 +122,7 @@ fun TaskCard(
                 onCheckedChange = onToggle,
                 reduceMotion = reduceMotion,
             )
-            TaskLabel(
-                text = task.text,
-                done = task.done,
-                reduceMotion = reduceMotion,
+            Column(
                 modifier = Modifier
                     .weight(1f)
                     .padding(horizontal = 8.dp)
@@ -119,20 +132,50 @@ fun TaskCard(
                         role = Role.Button,
                         onClick = onTextClick,
                     ),
-            )
-            IconButton(
-                onClick = onDeleteClick,
-                modifier = Modifier
-                    .pressScale(deleteInteraction)
-                    .size(48.dp),
-                interactionSource = deleteInteraction,
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.Delete,
-                    contentDescription = Copy.Delete,
-                    tint = InkMuted,
-                    modifier = Modifier.size(20.dp),
-                )
+                TaskLabel(text = task.text, done = task.done, reduceMotion = reduceMotion)
+                val label = task.repeat.label()
+                if (label.isNotEmpty()) {
+                    Text(
+                        text = label,
+                        color = InkMuted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Normal,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+            Box {
+                IconButton(
+                    onClick = { menuOpen = true },
+                    modifier = Modifier
+                        .pressScale(menuInteraction)
+                        .size(48.dp),
+                    interactionSource = menuInteraction,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.MoreVert,
+                        contentDescription = "更多",
+                        tint = InkMuted,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    if (!task.done) {
+                        DropdownMenuItem(
+                            text = { Text(Copy.RollTomorrow, color = Ink) },
+                            onClick = { menuOpen = false; onRollTomorrow() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(Copy.BackToPool, color = Ink) },
+                            onClick = { menuOpen = false; onMoveToPool() },
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(Copy.Delete, color = Danger) },
+                        onClick = { menuOpen = false; onDeleteClick() },
+                    )
+                }
             }
         }
     }
@@ -188,7 +231,7 @@ private fun Modifier.drawStrike(layout: TextLayoutResult?, strike: Float): Modif
 }
 
 @Composable
-private fun SanshiCheckbox(
+internal fun SanshiCheckbox(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     reduceMotion: Boolean,
