@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">三事</string>
+    <string name="widget_description">今日最多三件事</string>
 </resources>

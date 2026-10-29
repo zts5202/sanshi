@@ -5,6 +5,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -12,13 +13,13 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,11 +35,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -46,10 +48,16 @@ import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -70,10 +78,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.zts.sanshi.domain.RepeatRule
 import com.zts.sanshi.domain.Task
 import com.zts.sanshi.ui.theme.Bg
 import com.zts.sanshi.ui.theme.Blue
@@ -87,30 +94,10 @@ import com.zts.sanshi.ui.theme.InkDisabled
 import com.zts.sanshi.ui.theme.InkMuted
 import com.zts.sanshi.ui.theme.LocalReduceMotion
 import com.zts.sanshi.ui.theme.Motion
-import com.zts.sanshi.ui.theme.SanshiTheme
 import com.zts.sanshi.ui.theme.SuccessSoft
 import com.zts.sanshi.ui.theme.Surface as SurfaceTone
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-
-@Composable
-fun SanshiRoute(viewModel: TodayViewModel) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val reduceMotion = rememberReduceMotion()
-    SanshiScreen(
-        state = state,
-        reduceMotion = reduceMotion,
-        onAddClick = viewModel::onAddClick,
-        onTaskClick = viewModel::onTaskClick,
-        onToggle = viewModel::onToggle,
-        onDeleteClick = viewModel::onDeleteClick,
-        onConfirmDelete = viewModel::onConfirmDelete,
-        onDismissDelete = viewModel::onDismissDelete,
-        onDismissFullHint = viewModel::onDismissFullHint,
-        onDismissEditor = viewModel::onDismissEditor,
-        onSaveEditor = viewModel::onSaveEditor,
-    )
-}
 
 @Composable
 fun SanshiScreen(
@@ -120,13 +107,35 @@ fun SanshiScreen(
     onTaskClick: (String) -> Unit,
     onToggle: (String, Boolean) -> Unit,
     onDeleteClick: (String) -> Unit,
-    onConfirmDelete: () -> Unit,
+    onConfirmDelete: (Boolean) -> Unit,
     onDismissDelete: () -> Unit,
     onDismissFullHint: () -> Unit,
     onDismissEditor: () -> Unit,
-    onSaveEditor: (String) -> Unit,
+    onSaveEditor: (String, RepeatRule) -> Unit,
+    onOpenPool: () -> Unit,
+    onOpenHistory: () -> Unit,
+    onRollTomorrow: (String) -> Unit,
+    onMoveToPool: (String) -> Unit,
+    onAdmitWaiting: () -> Unit,
+    onDisposeAllRoll: () -> Unit,
+    onDisposeEach: () -> Unit,
+    onDisposeAllDeleteAsk: () -> Unit,
+    onDisposeAllDeleteConfirm: () -> Unit,
+    onDismissDeleteAllConfirm: () -> Unit,
+    onClearSnack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val snackHost = remember { SnackbarHostState() }
+    LaunchedEffect(state.snack) {
+        val kind = state.snack ?: return@LaunchedEffect
+        val msg = when (kind) {
+            SnackKind.Rolled -> Copy.SnackRolled
+            SnackKind.Pooled -> Copy.SnackPooled
+            SnackKind.Joined -> Copy.SnackJoined
+        }
+        snackHost.showSnackbar(msg)
+        onClearSnack()
+    }
     CompositionLocalProvider(LocalReduceMotion provides reduceMotion) {
         Box(
             modifier = modifier
@@ -140,13 +149,20 @@ fun SanshiScreen(
                     .fillMaxSize(),
                 containerColor = Bg,
                 contentWindowInsets = WindowInsets.safeDrawing,
+                snackbarHost = {
+                    SnackbarHost(snackHost) { data ->
+                        Snackbar(snackbarData = data, containerColor = Ink, contentColor = Color.White)
+                    }
+                },
                 bottomBar = {
                     AddBar(
                         full = state.isFull,
                         showHint = state.showFullHint,
+                        waiting = state.waiting,
                         reduceMotion = reduceMotion,
                         onAddClick = onAddClick,
                         onDismissHint = onDismissFullHint,
+                        onAdmitWaiting = onAdmitWaiting,
                     )
                 },
             ) { innerPadding ->
@@ -159,6 +175,9 @@ fun SanshiScreen(
                 ) {
                     Header(
                         dateLabel = state.dateLabel,
+                        poolBadge = state.poolHasItems,
+                        onOpenPool = onOpenPool,
+                        onOpenHistory = onOpenHistory,
                         modifier = Modifier
                             .padding(horizontal = 20.dp)
                             .padding(top = 8.dp, bottom = 20.dp),
@@ -169,6 +188,8 @@ fun SanshiScreen(
                         onTaskClick = onTaskClick,
                         onToggle = onToggle,
                         onDeleteClick = onDeleteClick,
+                        onRollTomorrow = onRollTomorrow,
+                        onMoveToPool = onMoveToPool,
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
@@ -177,38 +198,94 @@ fun SanshiScreen(
                 }
             }
         }
-        state.pendingDeleteId?.let {
-            DeleteDialog(onConfirm = onConfirmDelete, onDismiss = onDismissDelete)
-        }
-        state.editor?.let { request ->
-            EditorSheet(
-                request = request,
-                onDismiss = onDismissEditor,
-                onSave = onSaveEditor,
+        if (state.showDisposition) {
+            DispositionSheet(
+                pending = state.pendingIncomplete,
+                onRollAll = onDisposeAllRoll,
+                onDisposeEach = onDisposeEach,
+                onDeleteAll = onDisposeAllDeleteAsk,
             )
+        }
+        if (state.showDeleteAllConfirm) {
+            AlertDialog(
+                onDismissRequest = onDismissDeleteAllConfirm,
+                containerColor = Color.White,
+                title = {
+                    Text(Copy.DeleteAllConfirm, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                },
+                confirmButton = {
+                    TextButton(onClick = onDisposeAllDeleteConfirm) {
+                        Text(Copy.Delete, color = Danger, fontWeight = FontWeight.SemiBold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismissDeleteAllConfirm) {
+                        Text(Copy.Cancel, color = Ink, fontWeight = FontWeight.SemiBold)
+                    }
+                },
+            )
+        }
+        state.pendingDelete?.let { req ->
+            if (req.isSeries && !req.fromPool) {
+                SeriesDeleteDialog(
+                    onOnce = { onConfirmDelete(false) },
+                    onStop = { onConfirmDelete(true) },
+                    onDismiss = onDismissDelete,
+                )
+            } else {
+                DeleteDialog(onConfirm = { onConfirmDelete(false) }, onDismiss = onDismissDelete)
+            }
+        }
+        state.editor?.takeIf { !it.forPool }?.let { request ->
+            EditorSheet(request = request, onDismiss = onDismissEditor, onSave = onSaveEditor)
         }
     }
 }
 
 @Composable
-private fun Header(dateLabel: String, modifier: Modifier = Modifier) {
-    Column(modifier) {
-        Text(
-            text = Copy.AppName,
-            modifier = Modifier.semantics { heading() },
-            color = Ink,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.SemiBold,
-            lineHeight = 36.sp,
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = dateLabel,
-            color = InkMuted,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Normal,
-            lineHeight = 20.sp,
-        )
+private fun Header(
+    dateLabel: String,
+    poolBadge: Boolean,
+    onOpenPool: () -> Unit,
+    onOpenHistory: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = Copy.AppName,
+                modifier = Modifier.semantics { heading() },
+                color = Ink,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 36.sp,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = dateLabel,
+                color = InkMuted,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Normal,
+                lineHeight = 20.sp,
+            )
+        }
+        Box {
+            IconButton(onClick = onOpenPool, modifier = Modifier.size(44.dp)) {
+                Icon(Icons.Outlined.Inbox, contentDescription = Copy.Inbox, tint = Ink, modifier = Modifier.size(20.dp))
+            }
+            if (poolBadge) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 8.dp, end = 8.dp)
+                        .size(8.dp)
+                        .background(Blue, CircleShape),
+                )
+            }
+        }
+        IconButton(onClick = onOpenHistory, modifier = Modifier.size(44.dp)) {
+            Icon(Icons.Outlined.History, contentDescription = Copy.History, tint = Ink, modifier = Modifier.size(20.dp))
+        }
     }
 }
 
@@ -219,6 +296,8 @@ private fun ListRegion(
     onTaskClick: (String) -> Unit,
     onToggle: (String, Boolean) -> Unit,
     onDeleteClick: (String) -> Unit,
+    onRollTomorrow: (String) -> Unit,
+    onMoveToPool: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var retained by remember { mutableStateOf(state.tasks) }
@@ -234,10 +313,7 @@ private fun ListRegion(
                 shrinkVertically(tween(Motion.ms(200, reduceMotion), easing = Motion.ExitEasing)),
         ) {
             Column {
-                CelebrationBar(
-                    generation = state.celebrationGeneration,
-                    reduceMotion = reduceMotion,
-                )
+                CelebrationBar(generation = state.celebrationGeneration, reduceMotion = reduceMotion)
                 Spacer(modifier = Modifier.height(12.dp))
             }
         }
@@ -256,6 +332,8 @@ private fun ListRegion(
                     onTaskClick = onTaskClick,
                     onToggle = onToggle,
                     onDeleteClick = onDeleteClick,
+                    onRollTomorrow = onRollTomorrow,
+                    onMoveToPool = onMoveToPool,
                 )
             }
         }
@@ -278,6 +356,8 @@ private fun TaskStack(
     onTaskClick: (String) -> Unit,
     onToggle: (String, Boolean) -> Unit,
     onDeleteClick: (String) -> Unit,
+    onRollTomorrow: (String) -> Unit,
+    onMoveToPool: (String) -> Unit,
 ) {
     val slots = remember { mutableStateListOf<TaskSlot>() }
     val enterOffset = with(LocalDensity.current) { 12.dp.roundToPx() }
@@ -303,13 +383,11 @@ private fun TaskStack(
             slot.visible.targetState = false
         }
     }
-    val visibilityKey = slots.joinToString(separator = "|") {
+    val visibilityKey = slots.joinToString("|") {
         "${it.task.id}:${it.visible.currentState}:${it.visible.targetState}:${it.visible.isIdle}"
     }
     LaunchedEffect(visibilityKey) {
-        val finished = slots.filter { slot ->
-            !slot.visible.currentState && !slot.visible.targetState && slot.visible.isIdle
-        }
+        val finished = slots.filter { !it.visible.currentState && !it.visible.targetState && it.visible.isIdle }
         if (finished.isNotEmpty()) slots.removeAll(finished)
     }
     Column(
@@ -353,6 +431,8 @@ private fun TaskStack(
                         reduceMotion = reduceMotion,
                         onToggle = { done -> onToggle(task.id, done) },
                         onTextClick = { onTaskClick(task.id) },
+                        onRollTomorrow = { onRollTomorrow(task.id) },
+                        onMoveToPool = { onMoveToPool(task.id) },
                         onDeleteClick = { onDeleteClick(task.id) },
                     )
                 }
@@ -379,21 +459,9 @@ private fun EmptyState(reduceMotion: Boolean) {
             tint = EmptyIcon,
         )
         Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = Copy.EmptyTitle,
-            color = Ink,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium,
-            lineHeight = 22.sp,
-        )
+        Text(Copy.EmptyTitle, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Medium, lineHeight = 22.sp)
         Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = Copy.EmptySubtitle,
-            color = InkMuted,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Normal,
-            lineHeight = 18.sp,
-        )
+        Text(Copy.EmptySubtitle, color = InkMuted, fontSize = 13.sp, fontWeight = FontWeight.Normal, lineHeight = 18.sp)
     }
 }
 
@@ -418,16 +486,11 @@ private fun CelebrationBar(generation: Int, reduceMotion: Boolean) {
     val alpha = remember(generation) { Animatable(if (generation == 0 || reduceMotion) 1f else 0f) }
     LaunchedEffect(generation, reduceMotion) {
         if (generation == 0 || reduceMotion) {
-            scale.snapTo(1f)
-            alpha.snapTo(1f)
-            return@LaunchedEffect
+            scale.snapTo(1f); alpha.snapTo(1f); return@LaunchedEffect
         }
-        scale.snapTo(0.96f)
-        alpha.snapTo(0f)
+        scale.snapTo(0.96f); alpha.snapTo(0f)
         coroutineScope {
-            launch {
-                alpha.animateTo(1f, tween(Motion.ms(420, false), easing = Motion.EnterEasing))
-            }
+            launch { alpha.animateTo(1f, tween(Motion.ms(420, false), easing = Motion.EnterEasing)) }
             launch {
                 scale.animateTo(1.02f, tween(Motion.ms(210, false), easing = Motion.EnterEasing))
                 scale.animateTo(1f, tween(Motion.ms(210, false), easing = Motion.ExitEasing))
@@ -446,20 +509,9 @@ private fun CelebrationBar(generation: Int, reduceMotion: Boolean) {
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = Icons.Outlined.Check,
-            contentDescription = null,
-            tint = Blue,
-            modifier = Modifier.size(20.dp),
-        )
+        Icon(Icons.Outlined.Check, null, tint = Blue, modifier = Modifier.size(20.dp))
         Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = Copy.Celebration,
-            color = Ink,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium,
-            lineHeight = 22.sp,
-        )
+        Text(Copy.Celebration, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Medium, lineHeight = 22.sp)
     }
 }
 
@@ -467,9 +519,11 @@ private fun CelebrationBar(generation: Int, reduceMotion: Boolean) {
 private fun AddBar(
     full: Boolean,
     showHint: Boolean,
+    waiting: List<com.zts.sanshi.domain.WaitingSeries>,
     reduceMotion: Boolean,
     onAddClick: () -> Unit,
     onDismissHint: () -> Unit,
+    onAdmitWaiting: () -> Unit,
 ) {
     val density = LocalDensity.current
     val slidePx = with(density) { 8.dp.roundToPx() }
@@ -482,20 +536,55 @@ private fun AddBar(
         AnimatedVisibility(
             visible = showHint,
             enter = fadeIn(tween(Motion.ms(220, reduceMotion), easing = Motion.EnterEasing)) +
-                slideInVertically(
-                    tween(Motion.ms(220, reduceMotion), easing = Motion.EnterEasing),
-                ) { slidePx },
+                slideInVertically(tween(Motion.ms(220, reduceMotion), easing = Motion.EnterEasing)) { slidePx },
             exit = fadeOut(tween(Motion.ms(180, reduceMotion), easing = Motion.ExitEasing)) +
-                slideOutVertically(
-                    tween(Motion.ms(180, reduceMotion), easing = Motion.ExitEasing),
-                ) { slidePx },
+                slideOutVertically(tween(Motion.ms(180, reduceMotion), easing = Motion.ExitEasing)) { slidePx },
         ) {
             Column {
                 FullHint(onDismiss = onDismissHint)
                 Spacer(modifier = Modifier.height(8.dp))
             }
         }
+        if (!showHint && waiting.isNotEmpty()) {
+            WaitingHint(
+                count = waiting.size,
+                full = full,
+                onAdmit = onAdmitWaiting,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        } else if (showHint && waiting.isNotEmpty()) {
+            // merge as subtitle is already in FullHint; optional extra line skipped to keep full priority
+        }
         AddButton(enabled = !full, onClick = onAddClick)
+    }
+}
+
+@Composable
+private fun WaitingHint(count: Int, full: Boolean, onAdmit: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(SurfaceTone, RoundedCornerShape(12.dp))
+            .border(1.dp, Border, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.Repeat, null, tint = InkMuted, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = if (count <= 1) Copy.WaitingHint else Copy.WaitingHintN.format(count),
+            color = InkMuted,
+            fontSize = 13.sp,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onAdmit, enabled = !full) {
+            Text(
+                Copy.Join,
+                color = if (full) InkDisabled else Blue,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
     }
 }
 
@@ -517,12 +606,7 @@ private fun FullHint(onDismiss: () -> Unit) {
             lineHeight = 18.sp,
         )
         IconButton(onClick = onDismiss) {
-            Icon(
-                imageVector = Icons.Outlined.Close,
-                contentDescription = Copy.DismissHint,
-                tint = InkMuted,
-                modifier = Modifier.size(18.dp),
-            )
+            Icon(Icons.Outlined.Close, Copy.DismissHint, tint = InkMuted, modifier = Modifier.size(18.dp))
         }
     }
 }
@@ -559,17 +643,9 @@ private fun AddButton(enabled: Boolean, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = Icons.Outlined.Add,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-            )
+            Icon(Icons.Outlined.Add, null, modifier = Modifier.size(20.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = Copy.Add,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Text(Copy.Add, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -581,79 +657,40 @@ private fun DeleteDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
         containerColor = Color.White,
         titleContentColor = Ink,
         shape = RoundedCornerShape(16.dp),
-        title = {
-            Text(
-                text = Copy.DeleteTitle,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                color = Ink,
-            )
-        },
+        title = { Text(Copy.DeleteTitle, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Ink) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text(
-                    text = Copy.Delete,
-                    color = Danger,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Text(Copy.Delete, color = Danger, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text(
-                    text = Copy.Cancel,
-                    color = Ink,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Text(Copy.Cancel, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             }
         },
     )
 }
 
-@Preview(showBackground = true, widthDp = 360, heightDp = 740)
 @Composable
-private fun EmptyPreview() {
-    SanshiTheme {
-        SanshiScreen(
-            state = TodayUiState(dateLabel = "10月28日 · 周三"),
-            reduceMotion = true,
-            onAddClick = {},
-            onTaskClick = {},
-            onToggle = { _, _ -> },
-            onDeleteClick = {},
-            onConfirmDelete = {},
-            onDismissDelete = {},
-            onDismissFullHint = {},
-            onDismissEditor = {},
-            onSaveEditor = {},
-        )
-    }
-}
-
-@Preview(showBackground = true, widthDp = 360, heightDp = 740)
-@Composable
-private fun DonePreview() {
-    SanshiTheme {
-        SanshiScreen(
-            state = TodayUiState(
-                dateLabel = "10月28日 · 周三",
-                tasks = listOf(
-                    Task("1", "写完规格", true),
-                    Task("2", "交出可安装包", true),
-                ),
-            ),
-            reduceMotion = true,
-            onAddClick = {},
-            onTaskClick = {},
-            onToggle = { _, _ -> },
-            onDeleteClick = {},
-            onConfirmDelete = {},
-            onDismissDelete = {},
-            onDismissFullHint = {},
-            onSaveEditor = {},
-            onDismissEditor = {},
-        )
-    }
+private fun SeriesDeleteDialog(onOnce: () -> Unit, onStop: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        title = { Text(Copy.DeleteSeriesTitle, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Medium) },
+        confirmButton = {
+            TextButton(onClick = onOnce) {
+                Text(Copy.DeleteOnce, color = Blue, fontWeight = FontWeight.SemiBold)
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onStop) {
+                    Text(Copy.StopSeries, color = Ink, fontWeight = FontWeight.SemiBold)
+                }
+                TextButton(onClick = onDismiss) {
+                    Text(Copy.Cancel, color = InkMuted, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        },
+    )
 }
